@@ -1,6 +1,7 @@
 """Data loading and cleaning helpers"""
 
 import json
+import os
 import urllib.request
 from datetime import date
 
@@ -12,7 +13,7 @@ import numpy as np
 
 # ------------ Project folders ------------------------------------------------------
 # src/ holds the code, data/ the downloaded raw data and output/ everything the code writes
-PROJECT_DIR = Path.Path(__file__).resolve().parent.parent
+PROJECT_DIR = Path.Path(os.path.relpath(Path.Path(__file__).resolve().parent.parent))
 DATA_DIR = PROJECT_DIR / "data"
 OUTPUT_DIR = PROJECT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -91,7 +92,7 @@ DEFAULT_YEARS = [str(y) for y in np.arange(2001, 2020, 1)]
 # first year of each new SINAN system: SINAN Windows -> SINAN Net in 2007, SINAN Net -> SINAN Online in 2014
 SYSTEM_CHANGE_YEARS = [2007, 2014]
 
-# states with decent rain-gauge coverage, chosen in 01-UNIPLU_Exploratory.ipynb (PR is later dropped from the models)
+# states with decent rain-gauge coverage, chosen in 02-UNIPLU_Exploratory.ipynb (PR is later dropped from the models)
 FOCUS_STATES = ["CE", "PB", "SP", "PR", "RJ"]
 
 # last year of the training data; later years are the test set
@@ -377,13 +378,13 @@ def load_population(csv_path=POPULATION_CSV):
     return pl.scan_csv(csv_path)
 
 def load_rainfall_spatiotemporal(parquet_path=RAINFALL_CLEANED_DIR / "full_spatiotemporal", years=DEFAULT_YEARS):
-    """Scan the daily gauge readings with their health region and state (saved by 01-UNIPLU_Exploratory.ipynb)
+    """Scan the daily gauge readings with their health region and state (saved by 02-UNIPLU_Exploratory.ipynb)
     into a {year: LazyFrame} dict."""
     spatiotemporal_rainfall_path = Path.Path(parquet_path)
     if not spatiotemporal_rainfall_path.is_dir():
         raise FileNotFoundError(
             f"Processed rainfall data not found in {spatiotemporal_rainfall_path}. It is made by "
-            f"01-UNIPLU_Exploratory.ipynb from the UNIPLU-BR data ({UNIPLU_URL}), so run that notebook first."
+            f"02-UNIPLU_Exploratory.ipynb from the UNIPLU-BR data ({UNIPLU_URL}), so run that notebook first."
         )
     spatiotemporal_rain_data = dict()
     for year in years:
