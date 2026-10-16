@@ -2,3 +2,5 @@ data/SINAN_data/
 data/UNIPLU_data/
 __pycache__/
 .ipynb_checkpoints/
+/output
+/output/Rainfall_cleaned
