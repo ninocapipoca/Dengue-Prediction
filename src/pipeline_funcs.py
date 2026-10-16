@@ -10,6 +10,23 @@ import polars.selectors as cs
 import pathlib as Path
 import numpy as np
 
+# ------------ Project folders ------------------------------------------------------
+# src/ holds the code, data/ the downloaded raw data and output/ everything the code writes
+PROJECT_DIR = Path.Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_DIR / "data"
+OUTPUT_DIR = PROJECT_DIR / "output"
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+SINAN_DIR = DATA_DIR / "SINAN_data"
+UNIPLU_DIR = DATA_DIR / "UNIPLU_data"
+MUNICIPALITY_CSV = DATA_DIR / "Tabela_de_Municipios_corrigida.csv"
+RAINFALL_CLEANED_DIR = OUTPUT_DIR / "Rainfall_cleaned"
+POPULATION_CSV = OUTPUT_DIR / "pop_estimates.csv"
+
+SINAN_URL = "https://www.kaggle.com/datasets/gallo33henrique/dengue-no-brasil-sinan-20002025"
+UNIPLU_URL = "https://doi.org/10.5281/zenodo.18883358"
+MUNICIPALITY_URL = "https://www.gov.br/receitafederal/pt-br/acesso-a-informacao/dados-abertos/orgaos-e-municipios"
+
 # ------------ Variables reused across notebooks ------------------------------------
 # Codes reused across the pipeline
 DENGUE_CONFIRMADO = [1, 10, 11, 12]  # confirmed-dengue classification codes
@@ -25,8 +42,8 @@ UF_ABBR_TO_CODE = {
 
 CODE_TO_UF = {code: abbr for abbr, code in UF_ABBR_TO_CODE.items()}
 
-# PDF 1 = dic_dados_dengue.pdf
-# PDF 2 = DIC_DADOS_ONLINE_V2_encontrei_dps.pdf
+# PDF 1 = data/dic_dados_dengue.pdf
+# PDF 2 = data/dic_dados_dengue_alternative.pdf
 
 DEFAULT_NULL_DICT = {
     # Sex: "I" = Ignorado. PDF 1 f.14 (cs_sexo). Not documented in PDF 2.
@@ -74,16 +91,23 @@ DEFAULT_YEARS = [str(y) for y in np.arange(2001, 2020, 1)]
 # first year of each new SINAN system: SINAN Windows -> SINAN Net in 2007, SINAN Net -> SINAN Online in 2014
 SYSTEM_CHANGE_YEARS = [2007, 2014]
 
-# states with decent rain-gauge coverage, chosen in rainfall_exploratory.ipynb (PR is later dropped from the models)
+# states with decent rain-gauge coverage, chosen in 01-UNIPLU_Exploratory.ipynb (PR is later dropped from the models)
 FOCUS_STATES = ["CE", "PB", "SP", "PR", "RJ"]
 
 # last year of the training data; later years are the test set
 TRAIN_END_YEAR = 2015
 
 
-def load_dengue_data(data_dir, years_to_read=DEFAULT_YEARS):
+def load_dengue_data(data_dir=SINAN_DIR, years_to_read=DEFAULT_YEARS):
     """Scan the yearly SINAN dengue CSVs in data_dir (eg DENGBR01.csv) into a {year: LazyFrame} dict,
     keeping only the years in years_to_read."""
+    data_dir = Path.Path(data_dir)
+    if not data_dir.is_dir():
+        raise FileNotFoundError(
+            f"SINAN dengue data not found: {data_dir} does not exist. Download the dataset from {SINAN_URL} "
+            f"and store the yearly CSV files (DENGBR00.csv to DENGBR25.csv) in the data folder, in a subfolder "
+            f"called '{data_dir.name}' (ie {data_dir})."
+        )
     lf_dict = dict()
     for item in data_dir.glob("*.csv"):
         year_str = str(2000 + int(item.stem[-2:])) # filenames are eg, DENGBR01
@@ -96,7 +120,26 @@ def load_dengue_data(data_dir, years_to_read=DEFAULT_YEARS):
                     ignore_errors=True,
                     infer_schema_length=10000,
                 )
+    missing = sorted(set(years_to_read) - set(lf_dict))
+    if missing:
+        raise FileNotFoundError(
+            f"No SINAN dengue file for the year(s) {', '.join(missing)} in {data_dir}. Download the dataset from "
+            f"{SINAN_URL} and store all the yearly CSV files (eg DENGBR01.csv for 2001) in that folder."
+        )
     return lf_dict
+
+
+def load_municipality_codes(csv_path=MUNICIPALITY_CSV):
+    """IBGE municipality codes, names and states (UF) from the Receita Federal municipality table,
+    with the accents in the names corrected."""
+    csv_path = Path.Path(csv_path)
+    if not csv_path.is_file():
+        raise FileNotFoundError(
+            f"Municipality table not found: {csv_path} does not exist. It is a copy of the Receita Federal "
+            f"'Tabela de Municipios' ({MUNICIPALITY_URL}) with the accents in the names restored, and is part of "
+            f"the repository: restore it in the data folder as '{csv_path.name}'."
+        )
+    return pl.read_csv(csv_path, separator=";").select("CÓDIGO DO MUNICÍPIO - IBGE", "MUNICÍPIO - IBGE", "UF")
 
 def column_presence(lf_dict):
     """Build a year x column presence matrix from a {year: LazyFrame} dict.
@@ -168,9 +211,10 @@ def check_coverage(lf, cols_of_interest, nulls_dict=None, count_column=None, cou
     should not include null codes. If count_column is not in lf (eg CLASSI_FIN before 2007) the value is
     null, meaning 'not available'; deliberately not 0 (which would mean 'none') or -1 (used below).
 
-    Returns ``(presence, nulls)`` as one-row lazy frames. Columns absent from
-    ``lf`` get presence 0.0 and a null percentage of -1.0 (sentinel value).
+    Returns ``(presence, nulls)`` as one-row lazy frames, with the columns in alphabetical order. Columns
+    absent from ``lf`` get presence 0.0 and a null percentage of -1.0 (sentinel value).
     """
+    cols_of_interest = sorted(cols_of_interest)
     lf_cols = lf.collect_schema().names()
     present_cols = [col for col in cols_of_interest if col in lf_cols]
     if nulls_dict:
@@ -251,7 +295,7 @@ def _fill_year_gaps(pop):
     )
 
 
-def fetch_population(csv_path="output/pop_estimates.csv", cache=True):
+def fetch_population(csv_path=POPULATION_CSV, cache=True):
     """Download IBGE state population estimates (SIDRA table 6579) and optionally store in csv_path.
     Missing census-year figures are interpolated so every year has a denominator.
     """
@@ -325,14 +369,22 @@ def cases_per_capita_monthly(lf, pop_lf, year, per=100_000, states=None):
            .sort("SG_UF_NOT", "month")
     )
 
-def load_population(csv_path):
-    """Load the cached population CSV (see :func:`fetch_population`) as a lazy frame."""
+def load_population(csv_path=POPULATION_CSV):
+    """Load the cached population CSV as a lazy frame, downloading it first (see :func:`fetch_population`)
+    if it doesn't exist yet."""
+    if not Path.Path(csv_path).is_file():
+        fetch_population(csv_path)
     return pl.scan_csv(csv_path)
 
-def load_rainfall_spatiotemporal(parquet_path="Rainfall_cleaned/full_spatiotemporal", years=DEFAULT_YEARS):
-    """Scan the daily gauge readings with their health region and state (saved by rainfall_exploratory.ipynb)
+def load_rainfall_spatiotemporal(parquet_path=RAINFALL_CLEANED_DIR / "full_spatiotemporal", years=DEFAULT_YEARS):
+    """Scan the daily gauge readings with their health region and state (saved by 01-UNIPLU_Exploratory.ipynb)
     into a {year: LazyFrame} dict."""
     spatiotemporal_rainfall_path = Path.Path(parquet_path)
+    if not spatiotemporal_rainfall_path.is_dir():
+        raise FileNotFoundError(
+            f"Processed rainfall data not found in {spatiotemporal_rainfall_path}. It is made by "
+            f"01-UNIPLU_Exploratory.ipynb from the UNIPLU-BR data ({UNIPLU_URL}), so run that notebook first."
+        )
     spatiotemporal_rain_data = dict()
     for year in years:
         spatiotemporal_rain_data[str(year)] = pl.scan_parquet(Path.Path(spatiotemporal_rainfall_path / f"{year}_rain_with_region.parquet"))

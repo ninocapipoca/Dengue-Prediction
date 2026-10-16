@@ -1,4 +1,4 @@
-"""Plotting helpers for the dengue exploratory notebook."""
+"""Plotting helpers for the dengue notebooks."""
 
 import numpy as np
 import matplotlib.pyplot as plt
